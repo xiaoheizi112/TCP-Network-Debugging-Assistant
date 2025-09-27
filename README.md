@@ -6,9 +6,8 @@ TCP Network Debugging Assistant（TCP网络调试助手）是一个基于Qt框�
 
 ## 技术栈
 
-- **开发框架**: Qt 5/6
-- **编程语言**: C++17
-- **核心模块**: Qt Network (QTcpSocket, QTcpServer)
+- **开发框架**: Qt 5.15.2
+- **核心模块**: QTcpSocket, QTcpServer
 - **UI框架**: Qt Widgets
 - **构建系统**: qmake (.pro文件)
 
