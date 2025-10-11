@@ -1,217 +1,227 @@
+// 包含头文件
 #include "widget.h"
 #include "ui_widget.h"
-#include "mycombobox.h"
-#include <QTcpSocket>
-#include <QHostAddress>
-#include <QNetworkInterface>
-#include <QMessageBox>
-#include <QTextCursor>
-#include <QScrollBar>
-#include <QDateTime>
 
+// 包含额外的Qt类
+#include <QMessageBox>
+#include <QNetworkInterface>
+#include "mycombobox.h"
+
+// Widget构造函数
 Widget::Widget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
 {
-    ui->setupUi(this);
+    ui->setupUi(this);  // 初始化UI
+    this->setLayout(ui->verticalLayout);  // 设置布局
+    server = new QTcpServer(this);  // 创建TCP服务器对象
+
+    // 连接信号与槽
+    connect(ui->comboBoxChildren,&MyComboBox::on_ComboBox_clicked,this,&Widget::mComboBox_refresh);
+    connect(server,SIGNAL(newConnection()),this,SLOT(on_newClient_connect()));
     
-    tcpServer = new QTcpServer(this);
-    
-    // 连接信号和槽
-    connect(tcpServer, &QTcpServer::newConnection, this, &Widget::on_newConnection);
-    connect(ui->comboBox_2, &MyComboBox::on_ComboBox_clicked, this, &Widget::on_ComboBox_clicked);
-    
-    // 初始化IP地址列表
-    on_ComboBox_clicked();
+    // 初始化按钮状态
+    ui->btnStartListen->setEnabled(true);
+    ui->btnStopListen->setEnabled(false);
+    ui->btnLineOut->setEnabled(false);
+    ui->btnSend->setEnabled(false);
+
+    // 获取所有网络接口的IP地址
+    QList<QHostAddress> addresses = QNetworkInterface::allAddresses();
+    for(QHostAddress tmp : addresses){
+        // 只添加IPv4地址到地址下拉框
+        if(tmp.protocol() == QAbstractSocket::IPv4Protocol){
+            ui->comboBoxAddr->addItem(tmp.toString());
+        }
+    }
 }
 
+// Widget析构函数
 Widget::~Widget()
 {
-    delete ui;
+    delete ui;  // 释放UI资源
 }
 
-void Widget::on_newConnection()
+// 处理新客户端连接的槽函数
+void Widget::on_newClient_connect()
 {
-    QTcpSocket *socket = tcpServer->nextPendingConnection();
-    
-    // 连接客户端的信号和槽
-    connect(socket, &QTcpSocket::readyRead, this, &Widget::on_readyRead);
-    connect(socket, &QTcpSocket::disconnected, this, &Widget::on_disconnected);
-    connect(socket, &QTcpSocket::stateChanged, this, &Widget::on_stateChanged);
-    
-    // 添加客户端到下拉框
-    QString clientInfo = QString("%1:%2").arg(socket->peerAddress().toString()).arg(socket->peerPort());
-    ui->comboBox_2->addItem(clientInfo, QVariant::fromValue(socket));
-    
-    // 显示连接信息
-    QString msg = QString("[%1] 客户端连接: %2\n")
-                  .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
-                  .arg(clientInfo);
-    ui->textEdit->append(msg);
-}
-
-void Widget::on_readyRead()
-{
-    QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
-    if (!socket) return;
-    
-    QByteArray data = socket->readAll();
-    QString clientInfo = QString("%1:%2").arg(socket->peerAddress().toString()).arg(socket->peerPort());
-    
-    QString msg = QString("[%1] 收到来自 %2 的数据: %3\n")
-                  .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
-                  .arg(clientInfo)
-                  .arg(QString::fromUtf8(data));
-    
-    ui->textEdit->append(msg);
-    
-    // 自动滚动到底部
-    QScrollBar *scrollBar = ui->textEdit->verticalScrollBar();
-    scrollBar->setValue(scrollBar->maximum());
-}
-
-void Widget::on_disconnected()
-{
-    QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
-    if (!socket) return;
-    
-    QString clientInfo = QString("%1:%2").arg(socket->peerAddress().toString()).arg(socket->peerPort());
-    
-    // 从下拉框中移除客户端
-    for (int i = 0; i < ui->comboBox_2->count(); ++i) {
-        QTcpSocket *itemSocket = ui->comboBox_2->itemData(i).value<QTcpSocket*>();
-        if (itemSocket == socket) {
-            ui->comboBox_2->removeItem(i);
-            break;
-        }
-    }
-    
-    // 显示断开连接信息
-    QString msg = QString("[%1] 客户端断开: %2\n")
-                  .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
-                  .arg(clientInfo);
-    ui->textEdit->append(msg);
-    
-    socket->deleteLater();
-}
-
-void Widget::on_stateChanged()
-{
-    // 状态变化处理
-}
-
-void Widget::on_ComboBox_clicked()
-{
-    ui->comboBox->clear();
-    
-    // 获取所有网络接口
-    QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
-    
-    for (const QNetworkInterface &interface : interfaces) {
-        if (interface.flags() & QNetworkInterface::IsUp &&
-            interface.flags() & QNetworkInterface::IsRunning &&
-            !(interface.flags() & QNetworkInterface::IsLoopBack)) {
-            
-            QList<QNetworkAddressEntry> entries = interface.addressEntries();
-            for (const QNetworkAddressEntry &entry : entries) {
-                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol) {
-                    ui->comboBox->addItem(entry.ip().toString());
-                }
-            }
-        }
-    }
-    
-    // 添加本地回环地址
-    ui->comboBox->addItem("127.0.0.1");
-}
-
-void Widget::on_pushButton_clicked()
-{
-    // 开始监听
-    QString ip = ui->comboBox->currentText();
-    quint16 port = ui->lineEdit->text().toUShort();
-    
-    if (tcpServer->listen(QHostAddress(ip), port)) {
-        QString msg = QString("[%1] 服务器开始监听: %2:%3\n")
-                      .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
-                      .arg(ip)
-                      .arg(port);
-        ui->textEdit->append(msg);
+    // 检查是否有等待连接的客户端
+    if(server->hasPendingConnections()){
+        // 获取下一个等待连接的客户端套接字
+        QTcpSocket* connection = server->nextPendingConnection();
+        // 输出客户端信息到调试窗口
+        qDebug()<<"client Addr: "<<connection->peerAddress().toString()<<"port: "<<connection->peerPort();
+        // 在接收文本框中显示客户端信息
+        ui->textEditRev->insertPlainText("客户端地址："+connection->peerAddress().toString()+
+                                         "\n客户端端口号："+QString::number(connection->peerPort())+"\n");
         
-        ui->pushButton->setEnabled(false);
-        ui->pushButton_2->setEnabled(true);
-    } else {
-        QMessageBox::warning(this, "错误", QString("无法绑定端口 %1: %2")
-                            .arg(port)
-                            .arg(tcpServer->errorString()));
-    }
-}
+        // 连接信号与槽，处理数据接收
+        connect(connection,SIGNAL(readyRead()),this,SLOT(on_readyRead_handler()));
+        // 连接信号与槽，处理连接状态变化
+        connect(connection, SIGNAL(stateChanged(QAbstractSocket::SocketState)),
+                this, SLOT(mstateChanged(QAbstractSocket::SocketState)));
 
-void Widget::on_pushButton_2_clicked()
-{
-    // 停止监听
-    tcpServer->close();
-    
-    // 断开所有客户端连接
-    for (int i = ui->comboBox_2->count() - 1; i >= 0; --i) {
-        QTcpSocket *socket = ui->comboBox_2->itemData(i).value<QTcpSocket*>();
-        if (socket) {
-            socket->disconnectFromHost();
+        // 将客户端端口号添加到组合框中
+        ui->comboBoxChildren->addItem(QString::number(connection->peerPort()));
+        // 设置当前显示文本的操作
+        ui->comboBoxChildren->setCurrentText(QString::number(connection->peerPort()));
+
+        // 启用发送按钮
+        if(!ui->btnSend->isEnabled()){
+            ui->btnSend->setEnabled(true);
         }
     }
-    
-    ui->comboBox_2->clear();
-    
-    QString msg = QString("[%1] 服务器停止监听\n")
-                  .arg(QDateTime::currentDateTime().toString("hh:mm:ss"));
-    ui->textEdit->append(msg);
-    
-    ui->pushButton->setEnabled(true);
-    ui->pushButton_2->setEnabled(false);
 }
 
-void Widget::on_pushButton_3_clicked()
+// 开始监听按钮点击的槽函数
+void Widget::on_btnStartListen_clicked()
 {
-    // 发送数据
-    QString data = ui->textEdit_2->toPlainText();
-    if (data.isEmpty()) return;
-    
-    int currentIndex = ui->comboBox_2->currentIndex();
-    if (currentIndex < 0) {
-        QMessageBox::information(this, "提示", "没有连接的客户端");
+    // 获取用户输入的端口号
+    int port = ui->lineEditPort->text().toInt();
+    // 开始监听指定的IP地址和端口号
+    if(!server->listen(QHostAddress(ui->comboBoxAddr->currentText()),port)){
+        qDebug()<<"listenError!";
+        QMessageBox msgBox;
+        msgBox.setWindowTitle("监听失败！");
+        msgBox.setText("端口号被占用！");
+        msgBox.exec();
         return;
     }
+    // 更新按钮状态
+    ui->btnStartListen->setEnabled(false);
+    ui->btnStopListen->setEnabled(true);
+    ui->btnLineOut->setEnabled(true);
+}
+
+// 接收客户端数据的槽函数
+void Widget::on_readyRead_handler()
+{
+    // 获取发送信号的QTcpSocket对象
+    QTcpSocket* tmpSock = qobject_cast<QTcpSocket*>(sender());
+    // 读取所有可用数据
+    QByteArray recvData = tmpSock->readAll();
+    // 在接收文本框中显示收到的数据和客户端信息
+    ui->textEditRev->insertPlainText("客户端("+QString::number(tmpSock->peerPort())+"):"+recvData);
+    // 将光标移动到文本末尾
+    ui->textEditRev->moveCursor(QTextCursor::End);
+    // 确保光标可见
+    ui->textEditRev->ensureCursorVisible();
+}
+
+// 客户端断开连接的槽函数
+void Widget::mdisconnected()
+{
+    // 获取发送信号的QTcpSocket对象
+    QTcpSocket* tmpSock = qobject_cast<QTcpSocket*>(sender());
+    qDebug()<<"client out!";
+    // 释放套接字资源
+    tmpSock->deleteLater();
+}
+
+// 客户端连接状态改变的槽函数
+void Widget::mstateChanged(QAbstractSocket::SocketState socketState)
+{
+    int tmpIndex;
+    // 获取发送信号的QTcpSocket对象
+    QTcpSocket* tmpSock = qobject_cast<QTcpSocket*>(sender());
+    qDebug()<<"client out In state"<<socketState;
     
-    QString currentText = ui->comboBox_2->currentText();
-    
-    if (currentText == "全部客户端") {
-        // 发送给所有客户端
-        for (int i = 1; i < ui->comboBox_2->count(); ++i) { // 从1开始，跳过"全部客户端"
-            QTcpSocket *socket = ui->comboBox_2->itemData(i).value<QTcpSocket*>();
-            if (socket && socket->state() == QTcpSocket::ConnectedState) {
-                socket->write(data.toUtf8());
+    // 根据连接状态执行不同操作
+    switch(socketState){
+    case QAbstractSocket::UnconnectedState:
+        // 客户端断开连接，在接收文本框中显示信息
+        ui->textEditRev->insertPlainText("客户端("+QString::number(tmpSock->peerPort())+")断开！\n");
+        // 从组合框中移除客户端
+        tmpIndex = ui->comboBoxChildren->findText(QString::number(tmpSock->peerPort()));
+        ui->comboBoxChildren->removeItem(tmpIndex);
+        // 释放套接字资源
+        tmpSock->deleteLater();
+        // 如果没有客户端连接，禁用发送按钮
+        if(ui->comboBoxChildren->count() == 0)
+            ui->btnSend->setEnabled(false);
+        break;
+    case QAbstractSocket::ConnectedState:
+    case QAbstractSocket::ConnectingState:
+        // 客户端接入，在接收文本框中显示信息
+        ui->textEditRev->insertPlainText("客户端接入！");
+        break;
+    }
+}
+
+// 刷新客户端列表组合框的槽函数
+void Widget::mComboBox_refresh()
+{
+    // 清空组合框
+    ui->comboBoxChildren->clear();
+    // 查找所有客户端套接字
+    QList<QTcpSocket*> tcpsocketClients = server->findChildren<QTcpSocket*>();
+    // 将每个客户端的端口号添加到组合框
+    for(QTcpSocket* tmp : tcpsocketClients){
+        if(tmp!=nullptr)
+            ui->comboBoxChildren->addItem(QString::number(tmp->peerPort()));
+    }
+    // 添加"all"选项，表示发送给所有客户端
+    ui->comboBoxChildren->addItem("all");
+}
+
+// 发送按钮点击的槽函数
+void Widget::on_btnSend_clicked()
+{
+    // 查找所有客户端套接字
+    QList<QTcpSocket*> tcpsocketClients = server->findChildren<QTcpSocket*>();
+    // 检查是否有客户端连接
+    if(tcpsocketClients.isEmpty()){
+        // 没有客户端连接，显示错误消息
+        QMessageBox msgBox;
+        msgBox.setWindowTitle("发送错误！");
+        msgBox.setText("当前无法连接！");
+        msgBox.exec();
+        ui->btnSend->setEnabled(false);
+        return;
+    }
+    // 判断是发送给特定客户端还是所有客户端
+    if(ui->comboBoxChildren->currentText()!= "all"){
+        // 发送给特定客户端
+        QString currentName = ui->comboBoxChildren->currentText();
+        for(QTcpSocket*tmp : tcpsocketClients){
+            if(QString::number(tmp->peerPort()) == currentName){
+                tmp->write((ui->textEditSend->toPlainText()+"\n").toStdString().c_str());
             }
         }
-        
-        QString msg = QString("[%1] 发送给全部客户端: %2\n")
-                      .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
-                      .arg(data);
-        ui->textEdit->append(msg);
-    } else {
-        // 发送给指定客户端
-        QTcpSocket *socket = ui->comboBox_2->itemData(currentIndex).value<QTcpSocket*>();
-        if (socket && socket->state() == QTcpSocket::ConnectedState) {
-            socket->write(data.toUtf8());
-            
-            QString msg = QString("[%1] 发送给 %2: %3\n")
-                          .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
-                          .arg(currentText)
-                          .arg(data);
-            ui->textEdit->append(msg);
-        } else {
-            QMessageBox::warning(this, "错误", "客户端连接已断开");
+    }else{
+        // 发送给所有客户端
+        for(QTcpSocket* tmp : tcpsocketClients){
+            QByteArray sendData = ui->textEditSend->toPlainText().toLocal8Bit();
+            tmp->write(sendData);
         }
     }
-    
-    ui->textEdit_2->clear();
 }
+
+// 停止监听按钮点击的槽函数
+void Widget::on_btnStopListen_clicked()
+{
+    // 查找所有客户端套接字
+    QList<QTcpSocket*> tcpsocketClients = server->findChildren<QTcpSocket*>();
+    // 关闭所有客户端连接
+    for(QTcpSocket* tmp : tcpsocketClients){
+        tmp->close();
+    }
+    // 关闭服务器
+    server->close();
+    // 更新按钮状态
+    ui->btnStartListen->setEnabled(true);
+    ui->btnStopListen->setEnabled(false);
+    ui->btnLineOut->setEnabled(false);
+}
+
+// 退出按钮点击的槽函数
+void Widget::on_btnLineOut_clicked()
+{
+    // 先停止监听，关闭所有连接
+    on_btnStopListen_clicked();
+    // 释放服务器资源
+    delete server;
+    // 关闭窗口
+    this->close();
+}
+
